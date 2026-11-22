@@ -32,6 +32,8 @@ Windows apps → Windows shared audio engine → DSPi APO → selected playback 
 
 The APO (Audio Processing Object) loads inside the Windows audio engine for the selected output and uses DSP routines adapted from the [Weeb Labs DSPi firmware](https://github.com/WeebLabs/DSPi). The Console saves settings for that endpoint and reads live processing data. During playback, the APO crossfades compatible settings with a fixed processing delay of about 7 ms. Windows volume is used to calculate the loudness curve without applying the Windows gain a second time. At lower listening levels, the curve adds more low-frequency compensation.
 
+The input meters show the signal entering DSPi. The output meter bars estimate the playback level after Windows master volume and mute. Their clip indicators still show levels above 0 dBFS inside DSPi, before Windows volume. If DSPi’s output clip indicators light up, reduce preamp or DSP gain to leave headroom.
+
 Applications that use exclusive playback or a path outside the Windows shared audio engine can bypass the effect.
 
 ## Bypass or remove

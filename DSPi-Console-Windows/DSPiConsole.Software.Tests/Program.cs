@@ -5,6 +5,12 @@ using Dspi.Software;
 int assertions = 0;
 void Check(bool condition, string label) { assertions++; if (!condition) throw new Exception(label); }
 void Near(float actual, float expected, string label) => Check(Math.Abs(actual - expected) < .00005f, $"{label}: {actual} != {expected}");
+Near(WindowsPlaybackMeter.Gain(-6.0206f, .5f, false), .5f, "Output meter uses Windows dB as amplitude");
+Near(WindowsPlaybackMeter.Gain(-20, .32f, false), .1f, "Output meter does not use the nonlinear Windows slider scalar");
+Near(WindowsPlaybackMeter.Gain(-20, .32f, true), 0, "Mute silences playback meter");
+Near(WindowsPlaybackMeter.Gain(-63, 0, false), 0, "Windows volume zero silences playback meter");
+Near(WindowsPlaybackMeter.Gain(0, 1, false), 1, "Unity playback volume");
+Near(WindowsPlaybackMeter.Gain(3, 1, false), 1.4125376f, "Device gain is reflected");
 var selection = new BackendModeState();
 Check(!selection.TryCaptureHardwareScan(out _), "Startup does not authorize a hardware scan");
 selection.SelectHardware();

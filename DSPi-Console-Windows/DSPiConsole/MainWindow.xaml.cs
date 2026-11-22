@@ -759,6 +759,8 @@ public sealed partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(4, 0, 12, 0)
         };
+        if (ViewModel.Device.IsWindowsApo && channel.IsOutput)
+            ToolTipService.SetToolTip(meter, "Playback level after Windows volume. The clip light shows overload inside DSPi before Windows volume.");
         Grid.SetColumn(meter, 1);
         grid.Children.Add(meter);
         _channelMeters[(int)channel.Id] = meter;
@@ -3810,13 +3812,14 @@ public sealed partial class MainWindow : Window
     {
         var status = ViewModel.Status;
 
-        // Update inline per-channel meters
+        float playbackGain = ViewModel.Device.WindowsApoEndpointId != null &&
+            ViewModel.Device.WindowsApoEndpointId == _windowsVolumeEndpoint ? _windowsPlaybackMeterGain : 1;
         foreach (var (channelId, meter) in _channelMeters)
         {
-            if (channelId < status.Peaks.Length)
-                meter.Level = status.Peaks[channelId];
-            meter.IsClipping = status.IsClipping((ChannelId)channelId);
             var channel = LookupChannelById(channelId);
+            if (channelId < status.Peaks.Length)
+                meter.Level = status.Peaks[channelId] * (channel.IsOutput ? playbackGain : 1);
+            meter.IsClipping = status.IsClipping((ChannelId)channelId);
             meter.IsMuted = channel.IsOutput && ViewModel.GetChannelMute(channel);
         }
 

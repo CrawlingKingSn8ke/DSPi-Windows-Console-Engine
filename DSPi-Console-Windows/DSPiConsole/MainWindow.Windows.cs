@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using DSPiConsole.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using NAudio.CoreAudioApi;
@@ -12,6 +13,7 @@ public sealed partial class MainWindow
     private MMDeviceEnumerator? _windowsVolumeEnumerator;
     private MMDevice? _windowsVolumeDevice;
     private string? _windowsVolumeEndpoint;
+    private float _windowsPlaybackMeterGain = 1;
     private readonly DispatcherTimer _windowsStatusTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private bool _readingWindowsStatus;
     private bool _closedWindowsControls;
@@ -114,6 +116,7 @@ public sealed partial class MainWindow
         _windowsVolumeDevice?.Dispose();
         _windowsVolumeDevice = null;
         _windowsVolumeEndpoint = null;
+        _windowsPlaybackMeterGain = 1;
     }
 
     private void RefreshWindowsVolume()
@@ -135,7 +138,10 @@ public sealed partial class MainWindow
             if (_windowsVolumeDevice?.State == DeviceState.Active)
             {
                 var volume = _windowsVolumeDevice.AudioEndpointVolume;
-                var percent = volume.Mute ? 0 : Math.Round(volume.MasterVolumeLevelScalar * 100);
+                bool muted = volume.Mute;
+                float scalar = volume.MasterVolumeLevelScalar;
+                var percent = muted ? 0 : Math.Round(scalar * 100);
+                UpdateWindowsMeterGain(volume, scalar, muted);
                 MasterVolumeSlider.Value = percent;
                 MasterVolumeValueText.Text = $"{percent}%";
                 MasterVolumeSlider.IsEnabled = true;
@@ -149,6 +155,14 @@ public sealed partial class MainWindow
         MasterVolumeValueText.Text = "—";
     }
 
+    private void UpdateWindowsMeterGain(AudioEndpointVolume volume, float scalar, bool muted)
+    {
+        float gain = WindowsPlaybackMeter.Gain(muted || scalar <= 0 ? 0 : volume.MasterVolumeLevel, scalar, muted);
+        if (_windowsPlaybackMeterGain == gain) return;
+        _windowsPlaybackMeterGain = gain;
+        UpdateMeters();
+    }
+
     private void SetWindowsVolume(double percent)
     {
         if (_windowsVolumeDevice == null || _windowsVolumeEndpoint != ViewModel.Device.WindowsApoEndpointId) return;
@@ -158,6 +172,7 @@ public sealed partial class MainWindow
             volume.MasterVolumeLevelScalar = (float)Math.Clamp(percent / 100, 0, 1);
             if (percent > 0 && volume.Mute)
                 volume.Mute = false;
+            UpdateWindowsMeterGain(volume, volume.MasterVolumeLevelScalar, volume.Mute);
             MasterVolumeValueText.Text = $"{percent:F0}%";
         }
         catch (System.Runtime.InteropServices.COMException) { RefreshWindowsVolume(); }
