@@ -4,14 +4,14 @@ DSPi for Windows applies parametric EQ and other DSPi effects to shared-mode aud
 
 ## Install and check playback
 
-Setup can enable Windows audio testing for the unsigned x64 build. It asks before changing this machine-wide setting.
+The Console can enable Windows audio testing for the unsigned x64 build. It asks before changing this machine-wide setting.
 
-1. Download the Windows x64 ZIP from [Releases](https://github.com/CrawlingKingSn8ke/DSPi-Windows-Console-Engine/releases/latest) and extract the entire folder. Keep `DSPi Setup.exe`, `PowerShell-runtime.zip`, and the `Console` folder together.
-2. Open **DSPi Setup.exe**, select the output your Windows apps will use, and choose **Attach and open Console**.
-3. If prompted, choose **Yes** to enable Windows audio testing, then approve the Windows administrator prompt. Setup saves the current setting, briefly restarts Windows Audio, and opens the Console. The tested install path needs no PC reboot.
+1. Download the Windows x64 ZIP from [Releases](https://github.com/CrawlingKingSn8ke/DSPi-Windows-Console-Engine/releases/latest) and extract the entire folder. Keep `DSPiConsole.exe` and the other extracted files together.
+2. Open **DSPiConsole.exe**. Click the output picker at the bottom left and choose **Attach DSPi to** followed by your output name. Select an already attached output to reconnect its controls.
+3. If prompted, choose **Enable audio testing and attach**, then approve the Windows administrator prompt. The Console saves the current setting, briefly restarts Windows Audio, and connects to the output. The tested install path needs no PC reboot.
 4. In Windows Sound settings, route playback to the selected device. Play audio and check the Console meters or spectrum display. For a quick check, try a gentle EQ cut and toggle **Bypass**.
 
-Setup bundles the APO and the required PowerShell runtime. It offers active physical speaker outputs with a supported effects configuration. On compatible Windows 10 and 11 drivers, Setup can append DSPi to an existing endpoint effects chain and restore the original chain on removal. Legacy effects-only chains remain ineligible. Closing the Console leaves the APO and last applied settings active.
+The Console bundles the APO and uses the included PowerShell runtime. It offers active physical speaker outputs with a supported effects configuration. On compatible Windows 10 and 11 drivers, Setup can append DSPi to an existing endpoint effects chain and restore the original chain on removal. Legacy effects-only chains remain ineligible. Closing the Console leaves the APO and last applied settings active.
 
 ## What you can adjust
 
@@ -39,15 +39,15 @@ Applications that use exclusive playback or a path outside the Windows shared au
 ## Bypass or remove
 
 - Choose **Bypass** in the Console to temporarily bypass DSPi processing.
-- For an output attached by Setup, open **DSPi Setup.exe**, select the same output, and choose **Remove DSPi**. Setup uses the saved recovery record to restore the prior endpoint state and restarts Windows Audio.
+- Open the output picker, choose **Detach DSPi from Output**, and select the device. The Console uses the saved recovery record to restore the prior endpoint state and restarts Windows Audio.
 
-If **Attach and open Console** fails, Setup reports whether it stopped before administrator approval, during attachment, or while opening the Console. Press **Ctrl+C** with the error dialog selected to copy the message as text.
+If attachment fails, the Console shows the installer error.
 
-If you hear audio but see no meters, confirm that Windows and the Console point to the same output and that the app uses shared playback. If Setup does not offer an output, it may use a legacy effects chain or Windows may classify it as something other than an active physical speaker output.
+If you hear audio but see no meters, confirm that Windows and the Console point to the same output and that the app uses shared playback. If attachment is unavailable for an output, it may use a legacy effects chain or Windows may classify it as something other than an active physical speaker output.
 
 ## Enable local audio testing
 
-Setup normally enables this setting after you approve it. Use these commands for older installers or manual setup. The unsigned x64 APO requires a machine-wide Windows audio test setting. Changing it reduces protection for the Windows audio engine across all outputs. Use it on a PC you administer and restore the original setting when you finish testing. Administrator approval is required. [Microsoft APO development notes](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/implementing-audio-processing-objects#disable-use-of-an-embedded-manifest)
+The Console normally enables this setting after you approve it. Use these commands for older installers or manual setup. The unsigned x64 APO requires a machine-wide Windows audio test setting. Changing it reduces protection for the Windows audio engine across all outputs. Use it on a PC you administer and restore the original setting when you finish testing. Administrator approval is required. [Microsoft APO development notes](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/implementing-audio-processing-objects#disable-use-of-an-embedded-manifest)
 
 1. Open **Windows Terminal** or **Command Prompt** using **Run as administrator**.
 2. Run the query below and note the original value. If Windows reports that the value does not exist, record it as **absent**.
@@ -62,15 +62,15 @@ reg.exe query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio" /v DisableP
 reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio" /v DisableProtectedAudioDG /t REG_DWORD /d 1 /f
 ```
 
-Setup restarts Windows Audio during attachment. If the APO still fails to load after attachment, restart Windows once and check the Console meters again.
+The Console restarts Windows Audio during attachment. If the APO still fails to load after attachment, restart Windows once and check the Console meters again.
 
 ## Restore protected audio after testing
 
-Use **Detach DSPi from Output** in the Console or **Remove DSPi** in Setup. If Setup enabled audio testing, it automatically restores the original setting after you remove the last DSPi output. If you enabled it manually, choose **Restore protected audio** to clear the test override. If another output still has DSPi attached, the audio test setting stays on. After the last detachment, the choice removes the test override and restarts Windows Audio. If Windows cannot restart the audio service, the Console or Setup asks you to restart Windows.
+Use **Detach DSPi from Output** in the Console. If the installer enabled audio testing, it automatically restores the original setting after you remove the last DSPi output. If you enabled it manually, choose **Restore protected audio** to clear the test override. If another output still has DSPi attached, the audio test setting stays on. After the last detachment, the choice removes the test override and restarts Windows Audio. If Windows cannot restart the audio service, the Console asks you to restart Windows.
 
 Use the manual steps below with older builds or to restore a specific previous registry value.
 
-1. Open **DSPi Setup.exe**, select the attached output, and choose **Remove DSPi**. Repeat for each output you attached.
+1. Open the Console output picker, choose **Detach DSPi from Output**, and select the attached output. Repeat for each output you attached.
 2. In an administrator terminal, restore the original registry state. If the value was absent, delete just that value.
 
 ```powershell
@@ -98,16 +98,13 @@ Push-Location .\DSPi-Software-DSP
 .\scripts\build-apo.ps1 -Compiler 'C:\path\to\zig.exe'
 Pop-Location
 
-dotnet publish .\DSPi-Console-Windows\DSPiConsole\DSPiConsole.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishProfile= -o .\out\Console
+$runtime = 'C:\path\to\PowerShell-7.6.9-win-x64.zip'
+dotnet publish .\DSPi-Console-Windows\DSPiConsole\DSPiConsole.csproj -c Release -r win-x64 --self-contained true -p:Platform=x64 -p:PublishProfile= "-p:DspiPowerShellArchive=$runtime" -o .\out\Console
 ```
 
-The native build generates the engine used by the Console. The APO build also runs the Windows COM and DSP harness. An optional input WAV can be passed to the APO harness via `-SampleFile`.
+The native build generates the Console engine. The APO build runs the Windows COM and DSP harness. To process a sample WAV in the APO test, pass `-SampleFile` to `build-apo.ps1`.
 
-To build Setup, place the official x64 PowerShell ZIP expected by `Bootstrap.ps1` in the Setup project as `PowerShell-runtime.zip`. Setup uses PowerShell 7.6.9. The archive checksum must match the value pinned in the bootstrap. If you produce a different APO binary, update the approved APO hash in `Admin.ps1` and add the new hash to `Worker.ps1` before publishing. [PowerShell 7.6.9 official downloads](https://github.com/PowerShell/PowerShell/releases/tag/v7.6.9)
-
-```powershell
-dotnet publish .\DSPi-Console-Windows\Setup\DSPi.EndpointSetup\DSPi.EndpointSetup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableSingleFileAnalyzer=false -p:IncludeNativeLibrariesForSelfExtract=true -o .\out
-```
+The runtime archive must match the checksum in `Bootstrap.ps1`. If your APO binary has a different hash, update the approved hash in `Admin.ps1` and add it to the trusted list in `Worker.ps1` before publishing. [PowerShell 7.6.9 official downloads](https://github.com/PowerShell/PowerShell/releases/tag/v7.6.9)
 
 The Windows build was tested with the Weeb Labs DSPi USB output and TOPPING DX5 II. The Weeb Labs live check measured the change in the 80 Hz loudness boost as Windows volume moved, and the bundled registration and recovery path was verified in an isolated test.
 

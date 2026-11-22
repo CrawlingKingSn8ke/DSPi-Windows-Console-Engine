@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <DspiApoBinary Condition="'$(DspiApoBinary)' == ''">$(MSBuildThisFileDirectory)..\..\..\DSPi-Software-DSP\build\dspi-apo.dll</DspiApoBinary>
+    <DspiPowerShellArchive Condition="'$(DspiPowerShellArchive)' == ''">$(MSBuildThisFileDirectory)PowerShell-runtime.zip</DspiPowerShellArchive>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)OutputSetup.cs" Link="Setup\OutputSetup.cs" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)Bootstrap.ps1" LogicalName="DspiSetup.Bootstrap.ps1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)Admin.ps1" LogicalName="DspiSetup.Admin.ps1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)Worker.ps1" LogicalName="DspiSetup.Worker.ps1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)ProtectedStorage.psm1" LogicalName="DspiSetup.ProtectedStorage.psm1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)SharedComponent.psm1" LogicalName="DspiSetup.SharedComponent.psm1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)EndpointEffects.ps1" LogicalName="DspiSetup.EndpointEffects.ps1" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)AudioProtection.psm1" LogicalName="DspiSetup.AudioProtection.psm1" />
+    <EmbeddedResource Include="$(DspiApoBinary)" LogicalName="DspiSetup.Payload.Apo.dll" Condition="Exists('$(DspiApoBinary)')" />
+    <Content Include="$(DspiPowerShellArchive)" Link="PowerShell-runtime.zip" ExcludeFromSingleFile="true"
+      CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(DspiPowerShellArchive)')" />
+  </ItemGroup>
+</Project>

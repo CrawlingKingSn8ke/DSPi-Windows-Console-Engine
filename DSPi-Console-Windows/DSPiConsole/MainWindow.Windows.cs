@@ -1,3 +1,4 @@
+using DspiSetup;
 using System.Diagnostics;
 using System.Text;
 using DSPiConsole.Core.Models;
@@ -68,7 +69,7 @@ public sealed partial class MainWindow
 
     private async Task UpdateWindowsProcessingNotice()
     {
-        if (_readingWindowsStatus || _closedWindowsControls) return;
+        if (_readingWindowsStatus || _closedWindowsControls || _softwareFileBusy) return;
         if (ViewModel.Device.WindowsApoEndpointId is not { } endpoint)
         {
             SetWindowsProcessingNotice(null);
@@ -79,7 +80,7 @@ public sealed partial class MainWindow
         try
         {
             var statuses = await Task.Run(ViewModel.Device.GetWindowsApoStatuses);
-            if (_closedWindowsControls || ViewModel.Device.WindowsApoEndpointId != endpoint ||
+            if (_closedWindowsControls || _softwareFileBusy || ViewModel.Device.WindowsApoEndpointId != endpoint ||
                 ViewModel.Device.WindowsApoDesiredRevision != revision) return;
             bool pending = statuses.Any(s => s.IsFresh && s.Status != 5 && s.PendingRestartRevision == revision);
             SetWindowsProcessingNotice(pending ? "DSP settings saved. Restart playback to apply the lookahead change." : null);
@@ -224,22 +225,29 @@ public sealed partial class MainWindow
         };
         if (await confirmation.ShowAsync() != ContentDialogResult.Primary) return;
 
-        await ViewModel.FlushSoftwareWritesAsync();
         _softwareFileBusy = true;
         ApplySoftwareMenuState();
         int exitCode;
         try
         {
+            await ViewModel.FlushSoftwareWritesAsync();
+            CloseWindowsTestSignals();
             exitCode = await DetachWindowsEffectAsync(endpointId, restoreProtection.IsChecked == true);
             if (exitCode == 2) throw new InvalidOperationException("No active DSPi installation with protected recovery was found for this output.");
             if (exitCode == 3) throw new InvalidOperationException("Windows detached DSPi but cleanup still needs attention. Run protected recovery to finish.");
             if (exitCode is not (0 or 4 or 5 or 6)) throw new InvalidOperationException("DSPi removal could not be verified. Check the protected recovery status.");
         }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223) { return; }
         finally
         {
             _softwareFileBusy = false;
-            ApplySoftwareMenuState();
+            if (!_closedWindowsControls)
+            {
+                SetWindowsProcessingNotice(null);
+                ApplySoftwareMenuState();
+            }
         }
+        if (_closedWindowsControls) return;
         if (ViewModel.Device.WindowsApoEndpointId == endpointId)
             await DisconnectWindowsApoAsync();
 
@@ -263,24 +271,12 @@ public sealed partial class MainWindow
         }
     }
 
-    private static async Task<int> DetachWindowsEffectAsync(string endpointId, bool restoreProtection)
+    private async Task<int> DetachWindowsEffectAsync(string endpointId, bool restoreProtection)
     {
-        const string prefix = "{0.0.0.00000000}.";
-        if (!endpointId.StartsWith(prefix, StringComparison.Ordinal) ||
-            !Guid.TryParseExact(endpointId[prefix.Length..], "B", out var endpointGuid))
-            throw new InvalidOperationException("The selected Windows output could not be identified.");
-
-        string? setupFolder = Directory.GetParent(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory))?.FullName;
-        string? setup = setupFolder == null ? null : Path.Combine(setupFolder, "DSPi Setup.exe");
-        if (setup != null && File.Exists(setup))
-        {
-            var launch = new ProcessStartInfo(setup) { UseShellExecute = false, WorkingDirectory = setupFolder! };
-            launch.ArgumentList.Add(restoreProtection ? "--remove-and-restore-audio" : "--remove");
-            launch.ArgumentList.Add(endpointGuid.ToString("B"));
-            using var installer = Process.Start(launch) ?? throw new InvalidOperationException("Could not open DSPi Setup.");
-            await installer.WaitForExitAsync();
-            if (installer.ExitCode != 2) return installer.ExitCode;
-        }
+        var output = await Task.Run(() => OutputSetup.ListOutputs().SingleOrDefault(candidate =>
+            string.Equals(candidate.EndpointId, endpointId, StringComparison.OrdinalIgnoreCase)));
+        if (output is { Session: not null })
+            return await OutputSetup.RemoveAsync(output, restoreProtection, SetWindowsProcessingNotice);
 
         string host = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
         if (!File.Exists(host))
@@ -289,7 +285,7 @@ public sealed partial class MainWindow
             ?? throw new InvalidOperationException("The DSPi recovery command is missing.");
         using var reader = new StreamReader(resource);
         string selection = Convert.ToBase64String(Encoding.UTF8.GetBytes(endpointId));
-        using var protection = typeof(MainWindow).Assembly.GetManifestResourceStream("DSPiConsole.AudioProtection.psm1")
+        using var protection = typeof(MainWindow).Assembly.GetManifestResourceStream("DspiSetup.AudioProtection.psm1")
             ?? throw new InvalidOperationException("The Windows audio protection command is missing.");
         using var protectionReader = new StreamReader(protection);
         string module = Convert.ToBase64String(Encoding.UTF8.GetBytes(await protectionReader.ReadToEndAsync()));
