@@ -7,7 +7,9 @@ try {
  $audio=$fixture.CreateSubKey('Audio')
  try {
   $value='DisableProtectedAudioDG'
-  $audio.SetValue($value,1,[Microsoft.Win32.RegistryValueKind]::DWord)
+  if((Get-DspiAudioTestValue $audio) -ne 'Absent'){throw 'Fresh fixture must start without the test value.'}
+  Enable-DspiAudioTestValue $audio 'Absent'
+  if((Get-DspiAudioTestValue $audio) -ne 'Enabled'){throw 'Setup did not enable audio testing.'}
   $disabled=$render.CreateSubKey('{00000000-0000-0000-0000-000000000001}')
   try {
    $disabled.SetValue('DeviceState',4)
@@ -21,6 +23,12 @@ try {
     if((Restore-DspiAudioTestValue -Render $render -Audio $audio) -ne 'Unchanged'){throw 'Absent value should be left alone.'}
     $audio.SetValue($value,0,[Microsoft.Win32.RegistryValueKind]::DWord)
     if((Restore-DspiAudioTestValue -Render $render -Audio $audio) -ne 'Unchanged' -or $audio.GetValue($value) -ne 0){throw 'Existing protected value changed.'}
+    Enable-DspiAudioTestValue $audio 'Protected'
+    if((Restore-DspiAudioTestValue -Render $render -Audio $audio -Original 'Protected') -ne 'Restored' -or
+       $audio.GetValue($value) -ne 0 -or $audio.GetValueKind($value) -ne [Microsoft.Win32.RegistryValueKind]::DWord){throw 'Setup must restore the previous explicit zero.'}
+    $failed=$false
+    try { Enable-DspiAudioTestValue $audio 'Absent' } catch { $failed=$true }
+    if(!$failed -or $audio.GetValue($value) -ne 0){throw 'Setup overwrote a change made after the prerequisite check.'}
     $audio.SetValue($value,'1',[Microsoft.Win32.RegistryValueKind]::String)
     if((Restore-DspiAudioTestValue -Render $render -Audio $audio) -ne 'Unrecognized' -or $audio.GetValueKind($value) -ne [Microsoft.Win32.RegistryValueKind]::String){throw 'Changed type was overwritten.'}
    }finally{$fx.Dispose()}

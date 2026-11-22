@@ -6,9 +6,24 @@ $hostExe=Join-Path $programRoot ('DSPi-SetupRuntime-'+$OperationId+'\runtime\pws
 $done=Join-Path $reports ('setup-'+$OperationId+'.json')
 $taskName='DSPi-EndpointSetup-'+$OperationId
 $registered=$false
+$workerStarted=$false
 $sharedCreated=$false
 $classes=$null
 $binary=$null
+$audioTestRecord=Join-Path $reports 'audio-test-before.json'
+$testChangeStarted=$false
+function Get-OriginalAudioTestState {
+ Assert-DspiProtectedAcl -Path $audioTestRecord -File
+ $snapshot=Get-Content -Raw -LiteralPath $audioTestRecord | ConvertFrom-Json
+ if($snapshot.Original -cnotin @('Absent','Protected')){throw 'Invalid protected audio recovery record.'}
+ $snapshot.Original
+}
+function Restore-SetupAudioTestState {
+ $original=Get-OriginalAudioTestState
+ $result=Complete-DspiAudioProtection -Original $original
+ if($result -in @(0,6)){[IO.File]::Delete($audioTestRecord)}
+ return $result
+}
 function Ensure-ProtectedFolder([string]$path) {
  $audio='S-1-5-80-2676549577-1911656217-2625096541-4178041876-1366760775'
  if(!(Test-Path -LiteralPath $path)){
@@ -30,10 +45,6 @@ try{
     $SessionId -cnotmatch '^[a-f0-9]{32}$' -or $EndpointGuid -cnotmatch '^\{[0-9a-f-]{36}\}$'){throw 'Invalid setup request.'}
  if($BootstrapHost -ine $hostExe -or (Get-Process -Id $PID).Path -ine $hostExe -or
     (Get-AuthenticodeSignature -LiteralPath $hostExe).Status -ne 'Valid'){throw 'The protected setup runtime could not be verified.'}
- if($Operation -eq 'Install'){
-  $security=Get-ItemPropertyValue -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio' -Name DisableProtectedAudioDG
-  if($security -ne 1){throw 'This unsigned development package requires the existing local audio test configuration.'}
- }
  $module=Join-Path $Payload 'ProtectedStorage.psm1'
  $workerSource=Join-Path $Payload 'Worker.ps1'
  $moduleBytes=[IO.File]::ReadAllBytes($module)
@@ -108,21 +119,48 @@ try{
   $settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::FromMinutes(3))
   $null=Register-ScheduledTask -TaskName $taskName -Action $action -Principal $identity -Settings $settings
   $registered=$true
+  if($Operation -eq 'Install'){
+   $audio=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Audio',$true)
+   if(!$audio){throw 'Windows Audio registry settings are unavailable.'}
+   try{
+    $original=Get-DspiAudioTestValue $audio
+    if($original -ne 'Enabled'){
+     if($original -notin @('Absent','Protected')){throw 'The Windows audio test value has an unexpected type or value.'}
+     if($EnableAudioTesting -cne '1'){throw 'Allow Setup to enable audio testing, then try again.'}
+     if(Test-Path -LiteralPath $audioTestRecord){
+      if((Get-OriginalAudioTestState) -cne $original){throw 'The Windows audio test setting changed outside Setup.'}
+     }else{
+      $snapshot=@{Original=$original} | ConvertTo-Json -Compress
+      [DspiSecure.Native]::Record($audioTestRecord,[Text.Encoding]::UTF8.GetBytes($snapshot))
+      Assert-DspiProtectedAcl -Path $audioTestRecord -File
+     }
+     $testChangeStarted=$true
+     Enable-DspiAudioTestValue $audio $original
+    }
+   }finally{$audio.Dispose()}
+  }
   Start-ScheduledTask -TaskName $taskName
+  $workerStarted=$true
   $limit=[DateTime]::UtcNow.AddSeconds(95)
   while(!(Test-Path -LiteralPath $done) -and [DateTime]::UtcNow -lt $limit){Start-Sleep -Milliseconds 150}
   if(!(Test-Path -LiteralPath $done)){throw 'Windows did not report that setup completed. Use the protected recovery before retrying.'}
   $outcome=Get-Content -Raw -LiteralPath $done | ConvertFrom-Json
-  if($Operation -eq 'Remove' -and $outcome.RolledBack -and $RestoreProtection -ceq '1'){
-   $protectionResult=Complete-DspiAudioProtection
+  if($Operation -eq 'Remove' -and $outcome.RolledBack){
+   $protectionResult=if(Test-Path -LiteralPath $audioTestRecord){Restore-SetupAudioTestState}
+                     elseif($RestoreProtection -ceq '1'){Complete-DspiAudioProtection}
+                     else{0}
    if($protectionResult){exit $protectionResult}
+  }
+  if($testChangeStarted -and !$outcome.Installed -and !$outcome.RecoveryError){
+   $null=Restore-SetupAudioTestState
   }
   if($sharedCreated -and !$outcome.Installed -and !$outcome.RecoveryError){
    Unregister-DspiNewComponent -Classes $classes -DllPath $binary
    $sharedCreated=$false
   }
  }catch{
-  if($sharedCreated -and !$registered){Unregister-DspiNewComponent -Classes $classes -DllPath $binary}
+  if($testChangeStarted -and !$workerStarted){$null=Restore-SetupAudioTestState}
+  if($sharedCreated -and !$workerStarted){Unregister-DspiNewComponent -Classes $classes -DllPath $binary}
   throw
  }finally{
   if($classes){$classes.Dispose()}

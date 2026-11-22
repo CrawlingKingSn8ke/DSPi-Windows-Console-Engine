@@ -1,15 +1,34 @@
 # GPL-3.0. Remove the development override only after the last DSPi endpoint is detached.
+function Get-DspiAudioTestValue([Microsoft.Win32.RegistryKey]$Audio) {
+    $name = 'DisableProtectedAudioDG'
+    if ($name -notin $Audio.GetValueNames()) { return 'Absent' }
+    if ($Audio.GetValueKind($name) -ne [Microsoft.Win32.RegistryValueKind]::DWord) { return 'Unrecognized' }
+    switch ($Audio.GetValue($name)) {
+        0 { 'Protected' }
+        1 { 'Enabled' }
+        default { 'Unrecognized' }
+    }
+}
+
+function Enable-DspiAudioTestValue([Microsoft.Win32.RegistryKey]$Audio, [string]$Original) {
+    if ($Original -notin @('Absent','Protected') -or (Get-DspiAudioTestValue $Audio) -cne $Original) {
+        throw 'The Windows audio test setting changed during setup.'
+    }
+    $Audio.SetValue('DisableProtectedAudioDG',1,[Microsoft.Win32.RegistryValueKind]::DWord)
+    $Audio.Flush()
+    if ((Get-DspiAudioTestValue $Audio) -ne 'Enabled') { throw 'Windows did not save the audio test setting.' }
+}
+
 function Restore-DspiAudioTestValue {
     param(
         [Parameter(Mandatory)][Microsoft.Win32.RegistryKey]$Render,
-        [Parameter(Mandatory)][Microsoft.Win32.RegistryKey]$Audio
+        [Parameter(Mandatory)][Microsoft.Win32.RegistryKey]$Audio,
+        [ValidateSet('Absent','Protected')][string]$Original = 'Absent'
     )
     $value = 'DisableProtectedAudioDG'
-    if ($value -notin $Audio.GetValueNames()) { return 'Unchanged' }
-    if ($Audio.GetValueKind($value) -ne [Microsoft.Win32.RegistryValueKind]::DWord) { return 'Unrecognized' }
-    $setting = $Audio.GetValue($value)
-    if ($setting -eq 0) { return 'Unchanged' }
-    if ($setting -ne 1) { return 'Unrecognized' }
+    $setting = Get-DspiAudioTestValue $Audio
+    if ($setting -in @('Absent','Protected')) { return 'Unchanged' }
+    if ($setting -ne 'Enabled') { return 'Unrecognized' }
 
     $clsid = '{e53f75ef-9901-4ec4-a8d1-2fe2606a7431}'
     foreach ($name in $Render.GetSubKeyNames()) {
@@ -22,12 +41,13 @@ function Restore-DspiAudioTestValue {
         } finally { $effects.Dispose() }
     }
     if ($Audio.GetValue($value) -isnot [int] -or $Audio.GetValue($value) -ne 1) { return 'Unrecognized' }
-    $Audio.DeleteValue($value)
+    if ($Original -eq 'Protected') { $Audio.SetValue($value,0,[Microsoft.Win32.RegistryValueKind]::DWord) }
+    else { $Audio.DeleteValue($value) }
     $Audio.Flush()
     return 'Restored'
 }
 
-function Complete-DspiAudioProtection {
+function Complete-DspiAudioProtection([ValidateSet("Absent","Protected")][string]$Original = "Absent") {
     $root = $null
     $render = $null
     $audio = $null
@@ -36,7 +56,7 @@ function Complete-DspiAudioProtection {
         $render = $root.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render')
         $audio = $root.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Audio',$true)
         if (!$render -or !$audio) { return 5 }
-        $result = Restore-DspiAudioTestValue -Render $render -Audio $audio
+        $result = Restore-DspiAudioTestValue -Render $render -Audio $audio -Original $Original
     } catch { return 5 }
     finally {
         if ($audio) { $audio.Dispose() }
@@ -61,4 +81,4 @@ function Complete-DspiAudioProtection {
     return 0
 }
 
-Export-ModuleMember -Function Restore-DspiAudioTestValue,Complete-DspiAudioProtection
+Export-ModuleMember -Function Get-DspiAudioTestValue,Enable-DspiAudioTestValue,Restore-DspiAudioTestValue,Complete-DspiAudioProtection

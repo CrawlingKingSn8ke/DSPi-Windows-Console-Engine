@@ -128,13 +128,16 @@ internal static class OutputSetup
         return sessions;
     }
 
-    internal static async Task ApplyAsync(Output output, Action<string>? progress = null)
+    internal static bool AudioTestingEnabled => Registry.GetValue(
+        @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio", "DisableProtectedAudioDG", null) is 1;
+
+    internal static async Task ApplyAsync(Output output, Action<string>? progress = null, bool enableAudioTesting = false)
     {
         if (!output.CanAttach || output.Attached)
             throw new InvalidOperationException("Choose an active speaker output with a supported effects configuration.");
         if (!File.Exists(Path.Combine(ConsoleDirectory, "DSPiConsole.exe")))
             throw new InvalidOperationException("DSPi Console is missing from this setup folder.");
-        await RunAsync(output, "Install", Guid.NewGuid().ToString("N"), progress: progress);
+        await RunAsync(output, "Install", Guid.NewGuid().ToString("N"), progress: progress, enableAudioTesting: enableAudioTesting);
     }
 
     internal static async Task<int> RemoveAsync(Output output, bool restoreProtection, Action<string>? progress = null)
@@ -145,13 +148,12 @@ internal static class OutputSetup
     }
 
     private static async Task<int> RunAsync(Output output, string operation, string session, bool restoreProtection = false,
-        Action<string>? progress = null)
+        Action<string>? progress = null, bool enableAudioTesting = false)
     {
         if (!File.Exists(Shell) || !File.Exists(Archive))
             throw new InvalidOperationException("Keep DSPi Setup with every file from its setup folder. Windows PowerShell and the bundled runtime are required.");
-        var audioSetting = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio", "DisableProtectedAudioDG", null);
-        if (operation == "Install" && audioSetting is not 1)
-            throw new InvalidOperationException("Local audio testing is off. Follow �Enable local audio testing� in the DSPi README, then try again.");
+        if (operation == "Install" && !AudioTestingEnabled && !enableAudioTesting)
+            throw new InvalidOperationException("Open DSPi Setup to approve enabling Windows audio testing before attaching DSPi.");
 
         string operationId = Guid.NewGuid().ToString("N");
         string path = Directory.CreateTempSubdirectory("dspi-setup-").FullName;
@@ -174,7 +176,7 @@ internal static class OutputSetup
             using var identity = WindowsIdentity.GetCurrent();
             string user = identity.User?.Value ?? throw new InvalidOperationException("The active Windows user could not be identified.");
             string script = $"$Operation={Quote(operation)}\n$OperationId='{operationId}'\n$SessionId={Quote(session)}\n" +
-                $"$RestoreProtection='{(restoreProtection ? 1 : 0)}'\n$EndpointGuid='{output.Id:B}'\n$Payload={Quote(path)}\n$ExpectedUser={Quote(user)}\n" +
+                $"$RestoreProtection='{(restoreProtection ? 1 : 0)}'\n$EnableAudioTesting='{(enableAudioTesting ? 1 : 0)}'\n$EndpointGuid='{output.Id:B}'\n$Payload={Quote(path)}\n$ExpectedUser={Quote(user)}\n" +
                 $"$ModuleHash='{Convert.ToHexString(SHA256.HashData(module))}'\n$WorkerHash='{Convert.ToHexString(SHA256.HashData(worker))}'\n" +
                 $"$ArchivePath={Quote(Archive)}\n$AdminHash='{Convert.ToHexString(SHA256.HashData(admin))}'\n" +
                 $"$SharedHash='{Convert.ToHexString(SHA256.HashData(shared))}'\n$ApoHash='{Convert.ToHexString(SHA256.HashData(apo))}'\n" +
@@ -186,11 +188,11 @@ internal static class OutputSetup
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden
             };
-            progress?.Invoke("Waiting for Windows administrator approval�");
+            progress?.Invoke("Waiting for Windows administrator approval…");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows did not start the administrator helper.");
             progress?.Invoke(operation == "Install"
-                ? "Windows approved Setup. Preparing the runtime and attaching DSPi�"
-                : "Windows approved Setup. Removing DSPi�");
+                ? "Windows approved Setup. Preparing the runtime and attaching DSPi…"
+                : "Windows approved Setup. Removing DSPi…");
             using var timeLimit = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             try { await process.WaitForExitAsync(timeLimit.Token); }
             catch (OperationCanceledException)
@@ -326,19 +328,29 @@ internal sealed class SetupWindow : Form
     private async Task RunSelected(bool removeAttachment)
     {
         if (busy || outputs.SelectedItem is not Output output) return;
+        bool enableAudioTesting = false;
+        if (!removeAttachment && !output.Attached && !OutputSetup.AudioTestingEnabled)
+        {
+            var choice = MessageBox.Show(this,
+                "DSPi’s unsigned audio effect requires Windows audio testing. This lowers audio-engine protection for all outputs. " +
+                "Setup will save the current setting and restore it after the last DSPi output is removed. Enable audio testing and attach DSPi?",
+                "Enable Windows audio testing", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (choice != DialogResult.Yes) return;
+            enableAudioTesting = true;
+        }
         bool restoreProtection = false;
         if (removeAttachment)
         {
             var choice = MessageBox.Show(this,
-                "Restore Windows protected audio after removing DSPi from the last attached output? This applies to all outputs.",
+                "Setup automatically restores audio testing it enabled after the last removal. Also restore protected audio if you enabled testing manually?",
                 "Remove DSPi", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
             if (choice == DialogResult.Cancel) return;
             restoreProtection = choice == DialogResult.Yes;
         }
         busy = true;
         UpdateStatus();
-        status.Text = removeAttachment ? "Removing DSPi and restarting Windows Audio…" :
-            output.Attached ? "Opening the Console…" : "Attaching DSPi and restarting Windows Audio…";
+        status.Text = removeAttachment ? "Removing DSPi and restarting Windows Audioâ€¦" :
+            output.Attached ? "Opening the Consoleâ€¦" : "Attaching DSPi and restarting Windows Audioâ€¦";
         string result;
         bool failed = false;
         try
@@ -357,8 +369,8 @@ internal sealed class SetupWindow : Form
             }
             else
             {
-                if (!output.Attached) await OutputSetup.ApplyAsync(output, message => status.Text = message);
-                status.Text = "DSPi is attached. Opening the Console�";
+                if (!output.Attached) await OutputSetup.ApplyAsync(output, message => status.Text = message, enableAudioTesting);
+                status.Text = "DSPi is attached. Opening the Console…";
                 await OutputSetup.OpenConsoleAsync(output);
                 result = "DSPi Console opened for this output.";
             }

@@ -35,6 +35,7 @@ try{
   '$'+$name+'='+(Quote (Get-Variable -Name $name -ValueOnly))
  })
  $lines+='$RestoreProtection='+(Quote ([string]$RestoreProtection))
+ $lines+='$EnableAudioTesting='+(Quote ([string]$EnableAudioTesting))
  $lines+='$BootstrapHost='+(Quote $hostExe)
  # Keep CreateProcess arguments short on every Windows account and install path.
  $adminPath=Join-Path $stage 'Admin.ps1'

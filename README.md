@@ -4,11 +4,11 @@ DSPi for Windows applies parametric EQ and other DSPi effects to shared-mode aud
 
 ## Install and check playback
 
-Complete [Enable local audio testing](#enable-local-audio-testing) before installing the unsigned x64 build.
+Setup can enable Windows audio testing for the unsigned x64 build. It asks before changing this machine-wide setting.
 
 1. Download the Windows x64 ZIP from [Releases](https://github.com/CrawlingKingSn8ke/DSPi-Windows-Console-Engine/releases/latest) and extract the entire folder. Keep `DSPi Setup.exe`, `PowerShell-runtime.zip`, and the `Console` folder together.
 2. Open **DSPi Setup.exe**, select the output your Windows apps will use, and choose **Attach and open Console**.
-3. Approve the Windows administrator prompt. Setup briefly restarts Windows Audio and opens the Console. The tested install path needs no PC reboot.
+3. If prompted, choose **Yes** to enable Windows audio testing, then approve the Windows administrator prompt. Setup saves the current setting, briefly restarts Windows Audio, and opens the Console. The tested install path needs no PC reboot.
 4. In Windows Sound settings, route playback to the selected device. Play audio and check the Console meters or spectrum display. For a quick check, try a gentle EQ cut and toggle **Bypass**.
 
 Setup bundles the APO and the required PowerShell runtime. It offers active physical speaker outputs with a supported effects configuration. On compatible Windows 10 and 11 drivers, Setup can append DSPi to an existing endpoint effects chain and restore the original chain on removal. Legacy effects-only chains remain ineligible. Closing the Console leaves the APO and last applied settings active.
@@ -45,7 +45,7 @@ If you hear audio but see no meters, confirm that Windows and the Console point 
 
 ## Enable local audio testing
 
-The unsigned x64 APO requires a machine-wide Windows audio test setting. Changing it reduces protection for the Windows audio engine across all outputs. Use it on a PC you administer and restore the original setting when you finish testing. Administrator approval is required. [Microsoft APO development notes](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/implementing-audio-processing-objects#disable-use-of-an-embedded-manifest)
+Setup normally enables this setting after you approve it. Use these commands for older installers or manual setup. The unsigned x64 APO requires a machine-wide Windows audio test setting. Changing it reduces protection for the Windows audio engine across all outputs. Use it on a PC you administer and restore the original setting when you finish testing. Administrator approval is required. [Microsoft APO development notes](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/implementing-audio-processing-objects#disable-use-of-an-embedded-manifest)
 
 1. Open **Windows Terminal** or **Command Prompt** using **Run as administrator**.
 2. Run the query below and note the original value. If Windows reports that the value does not exist, record it as **absent**.
@@ -64,7 +64,7 @@ Setup restarts Windows Audio during attachment. If the APO still fails to load a
 
 ## Restore protected audio after testing
 
-In the updated Console, choose **Detach DSPi from Output** and select **Restore protected audio if this is the last DSPi output**. The **Remove DSPi** button in Setup offers the same choice. If another output still has DSPi attached, the audio test setting stays on. After the last detachment, the choice removes the test override and restarts Windows Audio. If Windows cannot restart the audio service, the Console or Setup asks you to restart Windows.
+Use **Detach DSPi from Output** in the Console or **Remove DSPi** in Setup. If Setup enabled audio testing, it automatically restores the original setting after you remove the last DSPi output. If you enabled it manually, choose **Restore protected audio** to clear the test override. If another output still has DSPi attached, the audio test setting stays on. After the last detachment, the choice removes the test override and restarts Windows Audio. If Windows cannot restart the audio service, the Console or Setup asks you to restart Windows.
 
 Use the manual steps below with older builds or to restore a specific previous registry value.
 
