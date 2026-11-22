@@ -39,6 +39,8 @@ Applications that use exclusive playback or a path outside the Windows shared au
 - Choose **Bypass** in the Console to temporarily bypass DSPi processing.
 - For an output attached by Setup, open **DSPi Setup.exe**, select the same output, and choose **Remove DSPi**. Setup uses the saved recovery record to restore the prior endpoint state and restarts Windows Audio.
 
+If **Attach and open Console** fails, Setup reports whether it stopped before administrator approval, during attachment, or while opening the Console. Press **Ctrl+C** with the error dialog selected to copy the message as text.
+
 If you hear audio but see no meters, confirm that Windows and the Console point to the same output and that the app uses shared playback. If Setup does not offer an output, it may use a legacy effects chain or Windows may classify it as something other than an active physical speaker output.
 
 ## Enable local audio testing

@@ -128,29 +128,30 @@ internal static class OutputSetup
         return sessions;
     }
 
-    internal static async Task ApplyAsync(Output output)
+    internal static async Task ApplyAsync(Output output, Action<string>? progress = null)
     {
         if (!output.CanAttach || output.Attached)
             throw new InvalidOperationException("Choose an active speaker output with a supported effects configuration.");
         if (!File.Exists(Path.Combine(ConsoleDirectory, "DSPiConsole.exe")))
             throw new InvalidOperationException("DSPi Console is missing from this setup folder.");
-        await RunAsync(output, "Install", Guid.NewGuid().ToString("N"));
+        await RunAsync(output, "Install", Guid.NewGuid().ToString("N"), progress: progress);
     }
 
-    internal static async Task<int> RemoveAsync(Output output, bool restoreProtection)
+    internal static async Task<int> RemoveAsync(Output output, bool restoreProtection, Action<string>? progress = null)
     {
         if (!output.Attached || output.Session == null)
             throw new InvalidOperationException("This output has no attachment made by this installer.");
-        return await RunAsync(output, "Remove", output.Session, restoreProtection);
+        return await RunAsync(output, "Remove", output.Session, restoreProtection, progress);
     }
 
-    private static async Task<int> RunAsync(Output output, string operation, string session, bool restoreProtection = false)
+    private static async Task<int> RunAsync(Output output, string operation, string session, bool restoreProtection = false,
+        Action<string>? progress = null)
     {
         if (!File.Exists(Shell) || !File.Exists(Archive))
             throw new InvalidOperationException("Keep DSPi Setup with every file from its setup folder. Windows PowerShell and the bundled runtime are required.");
         var audioSetting = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio", "DisableProtectedAudioDG", null);
         if (operation == "Install" && audioSetting is not 1)
-            throw new InvalidOperationException("This unsigned development build needs a PC already configured for local DSPi testing.");
+            throw new InvalidOperationException("Local audio testing is off. Follow “Enable local audio testing” in the DSPi README, then try again.");
 
         string operationId = Guid.NewGuid().ToString("N");
         string path = Directory.CreateTempSubdirectory("dspi-setup-").FullName;
@@ -185,7 +186,11 @@ internal static class OutputSetup
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden
             };
+            progress?.Invoke("Waiting for Windows administrator approval…");
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows did not start the administrator helper.");
+            progress?.Invoke(operation == "Install"
+                ? "Windows approved Setup. Preparing the runtime and attaching DSPi…"
+                : "Windows approved Setup. Removing DSPi…");
             using var timeLimit = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             try { await process.WaitForExitAsync(timeLimit.Token); }
             catch (OperationCanceledException)
@@ -195,7 +200,7 @@ internal static class OutputSetup
 
             string resultPath = Path.Combine(Reports, $"setup-{operationId}.json");
             if (!File.Exists(resultPath))
-                throw new InvalidOperationException("Windows returned no setup result.");
+                throw new InvalidOperationException(ExplainMissingReceipt(process.ExitCode));
             var report = JsonSerializer.Deserialize<Receipt>(File.ReadAllText(resultPath), Json)
                 ?? throw new InvalidOperationException("Windows returned an unreadable setup result.");
             if (report.Endpoint != output.EndpointId || (operation == "Install" ? !report.Installed : !report.RolledBack))
@@ -213,6 +218,7 @@ internal static class OutputSetup
     internal static async Task OpenConsoleAsync(Output output)
     {
         string executable = Path.Combine(ConsoleDirectory, "DSPiConsole.exe");
+        int? lastExitCode = null;
         for (int attempt = 0; attempt < 2; attempt++)
         {
             var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = ConsoleDirectory };
@@ -226,9 +232,23 @@ internal static class OutputSetup
                 if (poll >= 15 && console.MainWindowHandle != IntPtr.Zero) return;
             }
             if (!console.HasExited) break;
+            lastExitCode = console.ExitCode;
         }
-        throw new InvalidOperationException("DSPi is attached, but its Console window did not open.");
+        string detail = lastExitCode.HasValue ? $" The Console exited with code 0x{lastExitCode.Value:X8}." :
+            " The Console did not show a window before the timeout.";
+        throw new InvalidOperationException("DSPi is attached." + detail + " Try Open Console or launch Console\\DSPiConsole.exe directly.");
     }
+
+    private static string ExplainMissingReceipt(int code) => code switch
+    {
+        20 => "Setup could not read or extract PowerShell-runtime.zip. Extract the entire DSPi download to a local folder and try again.",
+        21 => "PowerShell-runtime.zip failed its checksum check. Download a fresh copy of the DSPi ZIP.",
+        22 => "Windows could not verify the bundled PowerShell signature. Check Windows Update and the system date before retrying.",
+        23 => "Windows could not start the bundled PowerShell runtime.",
+        24 => "The administrator helper did not finish in time. Wait before trying again.",
+        25 => "The administrator helper could not create or verify its protected setup folder.",
+        _ => $"Setup stopped before it could confirm the change (administrator helper exit code {code})."
+    };
 
     private static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
@@ -320,11 +340,12 @@ internal sealed class SetupWindow : Form
         status.Text = removeAttachment ? "Removing DSPi and restarting Windows Audioâ€¦" :
             output.Attached ? "Opening the Consoleâ€¦" : "Attaching DSPi and restarting Windows Audioâ€¦";
         string result;
+        bool failed = false;
         try
         {
             if (removeAttachment)
             {
-                int outcome = await OutputSetup.RemoveAsync(output, restoreProtection);
+                int outcome = await OutputSetup.RemoveAsync(output, restoreProtection, message => status.Text = message);
                 result = outcome switch
                 {
                     0 when restoreProtection => "DSPi was removed. Protected audio is enabled.",
@@ -336,16 +357,33 @@ internal sealed class SetupWindow : Form
             }
             else
             {
-                if (!output.Attached) await OutputSetup.ApplyAsync(output);
+                if (!output.Attached) await OutputSetup.ApplyAsync(output, message => status.Text = message);
+                status.Text = "DSPi is attached. Opening the Console…";
                 await OutputSetup.OpenConsoleAsync(output);
                 result = "DSPi Console opened for this output.";
             }
         }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { result = "Administrator approval was canceled."; }
-        catch (Exception ex) { result = ex.Message; }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            failed = true;
+            result = "Windows administrator approval was canceled or denied.";
+        }
+        catch (Exception ex)
+        {
+            failed = true;
+            result = ex.Message;
+        }
         busy = false;
-        RefreshOutputs();
+        try { RefreshOutputs(); }
+        catch (Exception ex)
+        {
+            failed = true;
+            result += "\n\nCould not refresh the playback list. " + ex.Message;
+            UpdateStatus();
+        }
         status.Text = result;
+        if (failed)
+            MessageBox.Show(this, result, "DSPi Setup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 }
 
