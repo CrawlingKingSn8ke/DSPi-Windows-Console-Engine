@@ -11,7 +11,7 @@ Complete [Enable local audio testing](#enable-local-audio-testing) before instal
 3. Approve the Windows administrator prompt. Setup briefly restarts Windows Audio and opens the Console. The tested install path needs no PC reboot.
 4. In Windows Sound settings, route playback to the selected device. Play audio and check the Console meters or spectrum display. For a quick check, try a gentle EQ cut and toggle **Bypass**.
 
-Setup bundles the APO and the required PowerShell runtime. It offers active physical speaker outputs with an available effects configuration. Outputs with existing effects may be ineligible. Closing the Console leaves the APO and last applied settings active.
+Setup bundles the APO and the required PowerShell runtime. It offers active physical speaker outputs with a supported effects configuration. On compatible Windows 10 and 11 drivers, Setup can append DSPi to an existing endpoint effects chain and restore the original chain on removal. Legacy effects-only chains remain ineligible. Closing the Console leaves the APO and last applied settings active.
 
 ## What you can adjust
 
@@ -39,7 +39,7 @@ Applications that use exclusive playback or a path outside the Windows shared au
 - Choose **Bypass** in the Console to temporarily bypass DSPi processing.
 - For an output attached by Setup, open **DSPi Setup.exe**, select the same output, and choose **Remove DSPi**. Setup uses the saved recovery record to restore the prior endpoint state and restarts Windows Audio.
 
-If you hear audio but see no meters, confirm that Windows and the Console point to the same output and that the app uses shared playback. If Setup does not offer an output, it may already have audio effects or may not be an active physical speaker output.
+If you hear audio but see no meters, confirm that Windows and the Console point to the same output and that the app uses shared playback. If Setup does not offer an output, it may use a legacy effects chain or Windows may classify it as something other than an active physical speaker output.
 
 ## Enable local audio testing
 

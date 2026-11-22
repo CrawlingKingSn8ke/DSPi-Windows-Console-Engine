@@ -132,7 +132,10 @@ public sealed partial class MainWindow
             !Guid.TryParseExact(endpointId[endpointPrefix.Length..], "B", out var id)) return false;
         string effectsKey = $@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{id:B}\FxProperties";
         var effect = Registry.GetValue(effectsKey, "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7", null) as string;
-        return string.Equals(effect, "{e53f75ef-9901-4ec4-a8d1-2fe2606a7431}", StringComparison.OrdinalIgnoreCase);
+        const string clsid = "{e53f75ef-9901-4ec4-a8d1-2fe2606a7431}";
+        var composite = Registry.GetValue(effectsKey, "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15", null) as string[];
+        return string.Equals(effect, clsid, StringComparison.OrdinalIgnoreCase) ||
+            composite?.Contains(clsid, StringComparer.OrdinalIgnoreCase) == true;
     }
 
     private static void RememberWindowsApoOutput(string endpointId)

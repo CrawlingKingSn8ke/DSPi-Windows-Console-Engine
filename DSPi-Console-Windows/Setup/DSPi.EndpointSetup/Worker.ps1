@@ -3,6 +3,7 @@ param(
  [Parameter(Mandatory)][ValidateSet('Install','Remove')][string]$Operation
 )
 $ErrorActionPreference='Stop'
+# Insert endpoint effect functions
 function Read-Session {
  $backup=Join-Path $PSScriptRoot 'endpoint-before.json'
  $record=Get-Content -Raw -LiteralPath $backup | ConvertFrom-Json
@@ -10,7 +11,7 @@ function Read-Session {
     $record.SessionId -cnotmatch '^[a-f0-9]{32}$' -or
     ('install-'+$record.SessionId) -cne (Split-Path $PSScriptRoot -Leaf) -or
     $record.UserSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$'){throw 'Invalid protected endpoint record.'}
- if($record.FxPropertiesExisted -ne $false -or $record.ProfileExisted -ne $false){throw 'The original endpoint state is not supported.'}
+ if($record.FxPropertiesExisted -isnot [bool] -or $record.ProfileExisted -ne $false -or @($record.EffectPlan).Count -ne 5){throw 'The original endpoint state is not supported.'}
  $record
 }
 $record=Read-Session
@@ -18,10 +19,7 @@ $endpointGuid=([guid]$record.EndpointGuid).ToString('B')
 $endpointId='{0.0.0.00000000}.'+$endpointGuid
 $endpointBase='SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\'+$endpointGuid
 $clsid='{e53f75ef-9901-4ec4-a8d1-2fe2606a7431}'
-$binding='{67fe7ad1-1232-4c16-94ce-83a4f63be981},1'
 $effect='{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7'
-$mode='{d3993a3f-99c2-4402-b5ec-a92a0367664b},7'
-$defaultMode='{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}'
 $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($endpointId.ToLowerInvariant()))).ToLowerInvariant()
 $program=[Environment]::GetFolderPath('ProgramFiles')
 $data=[Environment]::GetFolderPath('CommonApplicationData')
@@ -53,18 +51,6 @@ function Restart-Audio {
   if((Get-Service Audiosrv).Status -ne 'Running'){Start-Service Audiosrv}
   foreach($service in $running){if((Get-Service $service.Name).Status -ne 'Running'){Start-Service -Name $service.Name}}
  }
-}
-function Undo-Values($key) {
- $expected=@{$effect=$clsid;$mode=$defaultMode;$binding=$hash}
- foreach($name in $expected.Keys) {
-  if($name -notin $key.GetValueNames()){continue}
-  $value=$key.GetValue($name)
-  if(@($value).Count -ne 1 -or [string]@($value)[0] -ine $expected[$name]){
-   throw 'An effects value changed during the test. Recovery preserved it.'
-  }
- }
- foreach($name in $expected.Keys){$key.DeleteValue($name,$false)}
- $key.Flush()
 }
 function Remove-TestProfile {
  if(!(Test-Path -LiteralPath $profile)){return}
@@ -181,51 +167,37 @@ function Open-TestEndpointParent {
  try { return [EndpointRegistryNative]::OpenForRestore($original,'',[System.Management.Automation.Language.NullString]::Value) }
  finally {$original.Dispose()}
 }
-$association='{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},0'
-$speaker='{DFF21CE1-F70F-11D0-B917-00A0C9223196}'
 function Restore-Test([bool]$refresh) {
- $parent=(Open-TestEndpointParent)
- if(!$parent){throw 'The selected endpoint is missing during removal.'}
+ $parent=Open-TestEndpointParent
  try{
-  $k=$parent.OpenSubKey('FxProperties',$true)
-  if($k){
+  $read=$parent.OpenSubKey('FxProperties')
+  if($read){
+   try{$effects=[EndpointRegistryNative]::OpenForRestore($read,'',[System.Management.Automation.Language.NullString]::Value)}
+   finally{$read.Dispose()}
    try{
-    if($association -in $k.GetValueNames() -and $k.GetValue($association) -ine $speaker){throw 'The association changed during testing.'}
-    Undo-Values $k
-    $k.DeleteValue($association,$false)
-    $empty=$k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0
-   }finally{$k.Dispose()}
-   if($empty){$parent.DeleteSubKey('FxProperties',$false);$parent.Flush()}
-  }
+    Set-DspiEffectPlan $effects $record.EffectPlan -Undo
+    $empty=$effects.ValueCount -eq 0 -and $effects.SubKeyCount -eq 0
+   }finally{$effects.Dispose()}
+   if($empty -and !$record.FxPropertiesExisted){$parent.DeleteSubKey('FxProperties',$false);$parent.Flush()}
+  }elseif($record.FxPropertiesExisted){throw 'The original effects store is missing.'}
  }finally{$parent.Dispose()}
  if($refresh){Restart-Audio}
  Remove-TestProfile
- if(!$empty -and $null -ne $k){throw 'Windows added other endpoint values; those were preserved.'}
 }
 
 $receiptRoot=Join-Path $program 'DSPi\APO'
 $done=Join-Path $receiptRoot ('setup-'+$OperationId+'.json')
 $result=[ordered]@{Endpoint=$endpointId;SessionId=$record.SessionId;Operation=$Operation;Installed=$false;RolledBack=$false;Error=$null;RecoveryError=$null}
 $mutation=$false
-$createdKey=$false
+$restoreEffects=$false
 $refresh=$false
 try{
  Assert-Endpoint
  if($Operation -eq 'Remove'){
-  $ep=$root.OpenSubKey($endpointBase+'\FxProperties')
-  if($ep){
-   try{
-    $present=$ep.GetValue($effect)
-    if($present -ine $clsid){throw 'The endpoint effect has changed.'}
-    if($ep.GetValue($binding) -ine $hash){throw 'The endpoint binding has changed.'}
-   }finally{$ep.Dispose()}
-  }
   Restore-Test $true
   $result.RolledBack=$true
   return
  }
- $ep=$root.OpenSubKey($endpointBase+'\FxProperties')
- if($ep){$ep.Dispose();throw 'This output has an effects store. Setup left it intact.'}
  if(Test-Path -LiteralPath $profile){throw 'This output already has a DSPi profile.'}
  $safety=$root.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Audio')
  try{if($safety.GetValue('DisableProtectedAudioDG') -ne 1){throw 'The local development audio configuration is unavailable.'}}finally{$safety.Dispose()}
@@ -258,16 +230,23 @@ try{
   $telemetryAcl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;'+$sid+')(A;OICI;0x1301bf;;;'+$audio+')')
   [IO.FileSystemAclExtensions]::Create([IO.DirectoryInfo]::new($telemetry),$telemetryAcl)
 
-  if('FxProperties' -in $parent.GetSubKeyNames()){throw 'The endpoint effects key appeared during setup.'}
-  $k=[EndpointRegistryNative]::OpenForRestore($parent,'FxProperties','O:SYG:SYD:P(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;BU)(A;;KR;;;S-1-5-80-2676549577-1911656217-2625096541-4178041876-1366760775)(A;;KR;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;;KR;;;S-1-5-80-1580948945-3239616721-2529237571-3761093093-1214243633)')
-  $createdKey=$true
+  $read=$parent.OpenSubKey('FxProperties')
   try{
-   $k.SetValue($association,$speaker,[Microsoft.Win32.RegistryValueKind]::String)
-   $k.SetValue($binding,$hash,[Microsoft.Win32.RegistryValueKind]::String)
-   $k.SetValue($mode,[string[]]@($defaultMode),[Microsoft.Win32.RegistryValueKind]::MultiString)
-   $k.SetValue($effect,$clsid,[Microsoft.Win32.RegistryValueKind]::String)
-   $k.Flush()
-   if($k.GetValue($effect) -ine $clsid){throw 'The endpoint attachment could not be confirmed.'}
+   if(($null -ne $read) -ne $record.FxPropertiesExisted){throw 'The endpoint effects key changed during setup.'}
+   if($read){
+    $k=[EndpointRegistryNative]::OpenForRestore($read,'',[System.Management.Automation.Language.NullString]::Value)
+   }else{
+    $k=[EndpointRegistryNative]::OpenForRestore($parent,'FxProperties','O:SYG:SYD:P(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;BU)(A;;KR;;;S-1-5-80-2676549577-1911656217-2625096541-4178041876-1366760775)(A;;KR;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;;KR;;;S-1-5-80-1580948945-3239616721-2529237571-3761093093-1214243633)')
+    $restoreEffects=$true
+   }
+  }finally{if($read){$read.Dispose()}}
+  try{
+   Set-DspiEffectPlan $k $record.EffectPlan -CheckOnly
+   $restoreEffects=$true
+   Set-DspiEffectPlan $k $record.EffectPlan
+   $registered=$k.GetValue($effect)
+   $composite=$k.GetValue('{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},15')
+   if($registered -ine $clsid -and $clsid -notin $composite){throw 'The endpoint attachment could not be confirmed.'}
   }finally{$k.Dispose()}
  }finally{$parent.Dispose()}
  $refresh=$true
@@ -277,7 +256,7 @@ try{
 }catch{$result.Error=$_.Exception.Message}
 finally{
  if($mutation -and !$result.Installed){
-  try{if($createdKey){Restore-Test $refresh}else{Remove-TestProfile};$result.RolledBack=$true}
+  try{if($restoreEffects){Restore-Test $refresh}else{Remove-TestProfile};$result.RolledBack=$true}
   catch{$result.RecoveryError=$_.Exception.Message}
  }
  $temp=$done+'.tmp'

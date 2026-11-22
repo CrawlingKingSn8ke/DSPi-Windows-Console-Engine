@@ -58,14 +58,17 @@ try{
   if($Operation -eq 'Install'){
    $endpoint='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\'+$EndpointGuid
    $key=Get-Item -LiteralPath $endpoint
-   if($key.GetValue('DeviceState') -ne 1 -or 'FxProperties' -in $key.GetSubKeyNames()){throw 'This output is inactive or has existing effects.'}
+   if($key.GetValue('DeviceState') -ne 1){throw 'This output is inactive.'}
    $properties=Get-Item -LiteralPath (Join-Path $endpoint 'Properties')
    $instance=$properties.GetValue('{b3f8fa53-0004-438e-9003-51a46e139bfc},2')
    if(!$instance -or $properties.GetValue('{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},8') -ine '{DFF21CE1-F70F-11D0-B917-00A0C9223196}'){throw 'Setup supports active physical speaker outputs.'}
    $profileKey=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('{0.0.0.00000000}.'+$EndpointGuid))).ToLowerInvariant()
    if(Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('DSPi\Profiles\'+$profileKey))){throw 'This output already has a DSPi profile.'}
+   $fx=$key.OpenSubKey('FxProperties')
+   $hadFx=$null -ne $fx
+   try{$plan=@(New-DspiEffectPlan $fx $profileKey)}finally{if($fx){$fx.Dispose()}}
    $s=New-DspiProtectedRecovery -SessionId $SessionId
-   $null=Write-DspiProtectedRecord -Directory $s.Directory -Name 'endpoint-before.json' -Value @{EndpointGuid=$EndpointGuid;HardwareInstance=$instance;UserSid=$sid;SessionId=$SessionId;FxPropertiesExisted=$false;ProfileExisted=$false}
+   $null=Write-DspiProtectedRecord -Directory $s.Directory -Name 'endpoint-before.json' -Value @{EndpointGuid=$EndpointGuid;HardwareInstance=$instance;UserSid=$sid;SessionId=$SessionId;FxPropertiesExisted=$hadFx;ProfileExisted=$false;EffectPlan=$plan}
    [DspiSecure.Native]::Record((Join-Path $sessionRoot 'Worker.ps1'),$workerBytes)
    Ensure-ProtectedFolder (Join-Path $dataRoot 'DSPi')
    Ensure-ProtectedFolder (Join-Path $dataRoot 'DSPi\Profiles')
@@ -95,7 +98,7 @@ try{
   $worker=Join-Path $sessionRoot 'Worker.ps1'
   Assert-DspiProtectedAcl -Path $worker -File
   $protectedHash=(Get-FileHash -LiteralPath $worker).Hash
-  $previousWorkers=@('B167AE874F4F3D802C6435F60584962B829A43F71AC3FEAAB9E8EE7A1E763B10','C6A1005B9D12F80F638D4F5E1D9EC5B5246C8A2945913E32C1BD218E9C02265C')
+  $previousWorkers=@('B167AE874F4F3D802C6435F60584962B829A43F71AC3FEAAB9E8EE7A1E763B10','C6A1005B9D12F80F638D4F5E1D9EC5B5246C8A2945913E32C1BD218E9C02265C','6F3795F198F598C32D590B6E76C49D1251321BF63771F6F3D1C7DD574437900E','7A51F089DB4B1C328F5C22DAD5FD2A92153B8BB02E6FC4A33E528492CEA7C201')
   if($protectedHash -cne $WorkerHash -and ($Operation -ne 'Remove' -or $protectedHash -cnotin $previousWorkers)){
    throw 'The protected endpoint helper differs from this installer version.'
   }

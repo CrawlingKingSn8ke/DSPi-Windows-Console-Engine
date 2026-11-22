@@ -62,7 +62,11 @@ internal static class OutputSetup
 {
     private static readonly string ConsoleDirectory = Path.Combine(AppContext.BaseDirectory, "Console");
     private const string Render = @"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render";
-    private const string Effect = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7";
+    private const string FxProperty = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},";
+    private const string Effect = FxProperty + "7";
+    private const string CompositeEffect = FxProperty + "15";
+    private static readonly string[] ModernEffectProperties = ["5", "6", "7", "13", "14", "15"];
+    private const string Binding = "{67fe7ad1-1232-4c16-94ce-83a4f63be981},1";
     private const string DspiClsid = "{e53f75ef-9901-4ec4-a8d1-2fe2606a7431}";
     private const string Speaker = "{dff21ce1-f70f-11d0-b917-00a0c9223196}";
     private static readonly string Reports = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "DSPi", "APO");
@@ -88,10 +92,16 @@ internal static class OutputSetup
             string? adapter = properties.GetValue("{b3f8fa53-0004-438e-9003-51a46e139bfc},6") as string;
             string display = string.IsNullOrWhiteSpace(adapter) ? label : $"{label} ({adapter})";
             using var effects = key.OpenSubKey("FxProperties");
-            bool attached = string.Equals(effects?.GetValue(Effect) as string, DspiClsid, StringComparison.OrdinalIgnoreCase);
+            bool attached = string.Equals(effects?.GetValue(Effect) as string, DspiClsid, StringComparison.OrdinalIgnoreCase)
+                || (effects?.GetValue(CompositeEffect) as string[])?.Contains(DspiClsid, StringComparer.OrdinalIgnoreCase) == true;
             bool speaker = string.Equals(properties.GetValue("{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},8") as string, Speaker, StringComparison.OrdinalIgnoreCase);
             string endpoint = "{0.0.0.00000000}." + id.ToString("B");
-            outputs.Add(new Output(id, display, speaker && effects == null, attached,
+            string[] names = effects?.GetValueNames() ?? [];
+            bool legacy = names.Contains(FxProperty + "1", StringComparer.OrdinalIgnoreCase) ||
+                names.Contains(FxProperty + "2", StringComparer.OrdinalIgnoreCase);
+            bool legacyOnly = legacy && !ModernEffectProperties.Any(property =>
+                names.Contains(FxProperty + property, StringComparer.OrdinalIgnoreCase));
+            outputs.Add(new Output(id, display, speaker && !legacyOnly && effects?.GetValue(Binding) == null, attached,
                 attached ? sessions.GetValueOrDefault(endpoint) : null));
         }
         return outputs.OrderBy(output => output.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
@@ -121,7 +131,7 @@ internal static class OutputSetup
     internal static async Task ApplyAsync(Output output)
     {
         if (!output.CanAttach || output.Attached)
-            throw new InvalidOperationException("Choose an active speaker output with no existing effects.");
+            throw new InvalidOperationException("Choose an active speaker output with a supported effects configuration.");
         if (!File.Exists(Path.Combine(ConsoleDirectory, "DSPiConsole.exe")))
             throw new InvalidOperationException("DSPi Console is missing from this setup folder.");
         await RunAsync(output, "Install", Guid.NewGuid().ToString("N"));
@@ -147,10 +157,13 @@ internal static class OutputSetup
         try
         {
             byte[] module = Resource("ProtectedStorage.psm1");
-            byte[] worker = Resource("Worker.ps1");
+            string effects = Encoding.UTF8.GetString(Resource("EndpointEffects.ps1")).TrimStart('\uFEFF');
+            byte[] worker = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(Resource("Worker.ps1"))
+                .Replace("# Insert endpoint effect functions", effects, StringComparison.Ordinal));
             byte[] admin = Resource("Admin.ps1");
             byte[] shared = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(Resource("SharedComponent.psm1")) + "\n" +
-                Encoding.UTF8.GetString(Resource("AudioProtection.psm1")).TrimStart('\uFEFF'));
+                Encoding.UTF8.GetString(Resource("AudioProtection.psm1")).TrimStart('\uFEFF') + "\n" + effects +
+                "\nExport-ModuleMember -Function New-DspiEffectPlan");
             byte[] apo = Resource("Payload.Apo.dll");
             File.WriteAllBytes(Path.Combine(path, "ProtectedStorage.psm1"), module);
             File.WriteAllBytes(Path.Combine(path, "Worker.ps1"), worker);
@@ -286,7 +299,7 @@ internal sealed class SetupWindow : Form
                 null => "No active Windows playback outputs found.",
                 { Attached: true } => "DSPi is attached to this output.",
                 { CanAttach: true } => "Setup restarts Windows Audio briefly. Your default playback output stays the same.",
-                _ => "This output uses an existing effect or an unsupported speaker layout."
+                _ => "This output uses a legacy effects chain or an unsupported speaker type."
             };
     }
 
